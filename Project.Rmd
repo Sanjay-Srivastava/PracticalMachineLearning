@@ -1,0 +1,416 @@
+#Predicting Exercise Quality based on Activity Sensors
+
+Author: Sanjay-Srivastava
+Date:   October 16, 2015
+
+
+#References
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013
+
+For further information on this project, click [here.](http://groupware.les.inf.puc-rio.br/har)
+
+
+#Synopsis
+### The Experiment
+
+Wearable devices like Jawbone Up, Nike FuelBand, and Fitbit collect a large amount of data using activity recognition sensors. Using this data, it is possible to not just report on the 'quantity' of exercise, but also it's quality.
+
+Six participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions, identified as classes A, B, C, D and E. Sensors were used to collect data about the quality of the exercise - these sensors were attached to the arm and forearm of participants, as also to the belt and dumbbells they used. Based on readings from these sensors, each exercise session was coded as: 
+
+    (Class A) Exactly according to the specification
+    (Class B) Throwing the elbows to the front
+    (Class C) Lifting the dumbbell only halfway
+    (Class D) Lowering the dumbbell only halfway
+    (Class E) Throwing the hips to the front
+
+### Analysis Goal 
+Create a Prediction Algorithm that takes a set of sensor readings and predicts the corresponding class.
+
+### Methodology
+To develop a prediction model, we will perform the following steps:
+
+1 - Clean the data and run high-level exploratory analysis, leading to:
+
+    (a) Santization of data
+    (b) Feature selection
+    (c) Carve out a chunk of training dataset for cross-validation
+    (d) Standardization of training, cross-validtaion and testing datasets
+    
+2 - Test 3 OOB models: Random Forest, Boosted Regression and Linear Discriminant
+
+3 - Apply the results to test dataset comprised of 20 sensor readings and predict the Class outcome
+
+## Load Required Tools
+
+```{r Load_Libraries, echo = FALSE}
+   options( warn = -1 )
+   library(caret) 
+   library(rpart)
+   library(rpart.plot)
+   library(rattle)
+   library(data.table)
+   library(randomForest)
+   library(gbm)
+```   
+
+
+# Data Cleansing, Exploration & Feature Selection
+### Load Data   
+```{r Load_Data}   
+
+  download_data = TRUE
+  
+  if (file.exists("./Data/pml-training.csv") & file.exists("./Data/pml-testing.csv"))
+  {
+     training = read.csv("./Data/pml-training.csv")
+     testing  = read.csv("./Data/pml-testing.csv")
+     download_data = FALSE
+  }   
+  
+  
+  # If the data files are not already downloaded, do it now, and load them in dataframes
+  if (download_data)
+   {
+     setInternet2(use = TRUE)
+     url_train = 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv'
+     url_test  = 'https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv'
+     training = data.frame(fread(url_train))
+     testing =  data.frame(fread(url_test))
+     write.csv(training, "./Data/pml-training.csv")
+     write.csv(testing, "./Data/pml-testing.csv")
+   }
+
+
+   training$classe = factor(training$classe) ## factorize the column: CLASSE
+   dim(training)
+   dim(testing)
+```
+
+Training dataset has 19622 observations in 160 columns. Test dataset has 20 observations in 160 columns.
+
+
+### Explore Data
+We will start with the columns in the raw Test dataset. This is because IF a predictor does not exist in the training dataset, there is no point including it in a prediction model in the first place.
+
+A quick scoping of the reference material shows that the sensor readings are from accelerators attached to the arm, forearm, belt and dumbbell. Visually scanning the the downloaded files, we find that the sensor data is stored in columns that contain 'arm', 'forearm, 'belt' or 'dumbbell'. 
+
+```{r Explore_Data_1}
+   sum(complete.cases(testing))
+```   
+
+A seen above, we see that ALL observations have data missing, i.e. is incomplete. Let us now remove the columns that do not have sensor data or are mostly un-populated.
+
+```{r Explore_Data_2}
+   # check for columns with lots of missing values
+   hasValidData = sapply(testing, function(x) 
+                               ifelse( sum( is.na(x) | x == "" | x == "#DIV/0!" | x == "NA" ) == 0, 
+                                       TRUE , 
+                                       FALSE
+                                     ) 
+                        )
+
+   # columns containing sensor data 
+   hasSensorData = grepl(pattern = "_belt|_arm|_dumbbell|_forearm", names(testing)) 
+   
+   # final list of valuable columns in the testing data
+   covars = names(hasValidData)[hasValidData & hasSensorData]
+   covars
+   sum(complete.cases(testing[, covars]))
+```
+
+Note from above that all 20 test obsevations are now complete with data in all 52 predictor columns. If any of these columns do not exist in the training dataset, or are left materially un-populated, we will have to remove those from the list of predictors or apply other cleansing/ imputation techniques. 
+
+```{r Explore_Data_3}
+   train_cols = names(training)[covars]  
+   length(train_cols)    
+```
+
+Having verified that ALL test predictors DO exist in the training dataset, we will now check if the required predictor columns in training dataset have data
+
+```{r Explore_Data_4}
+   sum(complete.cases(training[, covars]))
+```
+
+Fortunately, all 19622 observations have the required 52 predictor columns filled with data. Therefore, there is no need for any further cleansing or imputation. 
+
+We will make one more quick check: if the predictor columns in training and test datasets are of the same or comparable data-types.
+
+```{r Explore_Data_5}
+
+   unique(sapply(training[, covars], class))
+   unique(sapply(testing [, covars], class))
+```
+  
+Since the columns are either integer or numeric, no casting is called for: R automatically converts integers to double as needed in the context. 
+
+Next, we will set aside a chunk of training data for cross-validation. 
+   
+```{r Explore_Data_6}   
+
+    set.seed(12345)
+    training$classe = factor(training$classe) ## factorize the outcome column: CLASSE
+    idx = createDataPartition(training$classe, p = 0.6, list = FALSE)
+    raw_train = training[ idx, c("classe", covars)]
+    raw_valid = training[-idx, c("classe", covars)]
+    x = rbind( training   = round(prop.table(table(raw_train$classe)),3), 
+               validating = round(prop.table(table(raw_valid$classe)),3)
+              )
+    x
+    
+```
+
+Note that in the proportions of each class in the two partitions are similar, meaning that overall, the partitions are representative of the whole training dataset as far as outcomes are concerned. 
+
+
+Finally, we will standardize the training data, and apply those statistics to standardize cross-validation and test datasets. 
+
+```{r Explore_Data_7}
+    ## Center and Scale the Training dataset; remove the column: CLASSE
+    standardization_stats = preProcess(raw_train[, covars]) 
+    standardization_stats
+    x = predict(standardization_stats, raw_train[, covars])
+    std_train = data.frame(classe = raw_train$classe, x[, covars])
+
+    ## Standardize the Validation dataset using pre-processing stats from the Training dataset
+    y = predict(standardization_stats, raw_valid[, covars])
+    std_valid = data.frame(classe = raw_valid$classe, y[, covars])
+    
+    ## Standardize the Test dataset using pre-processing stats from Training dataset
+    std_test = data.frame(predict(standardization_stats, testing[, covars]))
+
+    dim(std_train)
+    dim(std_valid)
+    dim(std_test)
+```   
+
+The test dataset does not have the column: classe - that's the value we will predict using a model below.
+
+# Building Prediction Model
+
+A quick look at the decision tree shows that there are 22 important predictors: 
+
+```{r Build_Model_1}
+    modelObj_rpart = rpart(classe ~ ., data = std_train, method ="class")
+    prp(modelObj_rpart)
+```
+
+The Principle Component Analysis points to about 25 PCs:
+
+```{r Build_Model_2}
+    modelObj_pca = preProcess(std_train [, covars], method = "pca")
+    modelObj_pca
+```
+
+### Random Forest
+
+```{r Random_Forest}
+    model_file = "./Objects/modelObj_rf.RData"
+    if (!file.exists(model_file))
+    {
+      tr_Control <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+      modelObj_rf = randomForest( classe ~ ., 
+                               data = std_train,
+                               trControl = tr_Control)        
+      save(modelObj_rf, file = model_file)
+    }
+    
+    ## run model
+    if(file.exists(model_file))
+    {
+      if (!exists("modelObj_rf")) {load(file = model_file, verbose = TRUE)}
+
+      predObj_train_rf = predict(modelObj_rf, std_train[, covars]) 
+      predObj_valid_rf = predict(modelObj_rf, std_valid[, covars])
+      predObj_test_rf  = predict(modelObj_rf, std_test [, covars])
+
+      modelObj_rf                                                     
+
+    }
+    
+    if(exists("predObj_train_rf") & exists("std_train"))
+    { 
+      cmObj_train_rf = confusionMatrix(predObj_train_rf, std_train$classe)
+      cmObj_train_rf$overall["Accuracy"]
+    }
+
+    if(exists("predObj_train_rf") & exists("std_valid"))
+    { 
+      cmObj_valid_rf = confusionMatrix(predObj_valid_rf, std_valid$classe)
+      cmObj_valid_rf$overall["Accuracy"]
+    }
+```
+
+As seen from the above, when applied to the cross-validation dataset, the accuracy is over 99%. Normally, no further algorithms are required to be tested, but in this case, we will go ahead and create two other models - boosted regression and linear discriminant to test out how close/ far they are relative to random forest. 
+
+
+### Generalized Booseted Regression
+
+```{r Boosted_Tree }
+    model_file = "./Objects/modelObj_gbm.RData"
+    if (!file.exists(model_file))
+    {
+      tr_Control <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+      modelObj_gbm = suppressMessages(train( classe ~ ., 
+                                          data = std_train, 
+                                          method = "gbm", 
+                                          trControl = tr_Control,
+                                          verbose = FALSE))       
+      save(modelObj_gbm, file = model_file)
+    }
+    
+    ## Run model
+    if(file.exists(model_file))
+    {
+      if (!exists("modelObj_gbm")) {load(file = model_file, verbose = TRUE)}
+
+      predObj_train_gbm = predict(modelObj_gbm, std_train[, covars]) 
+      predObj_valid_gbm = predict(modelObj_gbm, std_valid[, covars])
+      predObj_test_gbm  = predict(modelObj_gbm, std_test [, covars])
+      
+      modelObj_gbm                                                     
+
+    }
+    
+    if(exists("predObj_train_gbm") & exists("std_train"))
+    { 
+      cmObj_train_gbm = confusionMatrix(predObj_train_gbm, std_train$classe)
+      cmObj_train_gbm$overall["Accuracy"]
+    }
+
+    if(exists("predObj_train_gbm") & exists("std_valid"))
+    { 
+      cmObj_valid_gbm = confusionMatrix(predObj_valid_gbm, std_valid$classe)
+      cmObj_valid_gbm$overall["Accuracy"]
+    }
+```
+
+As seen from above, the accuracy of the model is still pretty good at 96% + when applied to the cross-validation dataset.
+
+### Linear Discriminant Analysis
+
+```{r Linear_Discriminant }
+    model_file = "./Objects/modelObj_lda.RData"
+    if (!file.exists(model_file))
+    {
+      tr_Control <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+      modelObj_lda = suppressMessages(train( classe ~ ., 
+                                          data = std_train, 
+                                          method = "lda", 
+                                          trControl = tr_Control,
+                                          verbose = FALSE))       
+      save(modelObj_lda, file = model_file)
+    }
+    
+    ## run model
+    if(file.exists(model_file))
+    {
+      if (!exists("modelObj_lda")) {load(file = model_file, verbose = TRUE)}
+
+      predObj_train_lda = predict(modelObj_lda, std_train[, covars]) 
+      predObj_valid_lda = predict(modelObj_lda, std_valid[, covars])
+      predObj_test_lda  = predict(modelObj_lda, std_test [, covars])
+      
+      modelObj_lda                                                     
+
+    }
+    if(exists("predObj_train_lda") & exists("std_train"))
+    { 
+      cmObj_train_lda = confusionMatrix(predObj_train_lda, std_train$classe)
+      cmObj_train_lda$overall["Accuracy"]
+    }
+
+    if(exists("predObj_train_lda") & exists("std_valid"))
+    { 
+      cmObj_valid_lda = confusionMatrix(predObj_valid_lda, std_valid$classe)
+      cmObj_valid_lda$overall["Accuracy"]
+    }
+```
+
+
+# Summary
+
+1. Random Forest appears to be the best model, with the following statistics:
+
+      (a) Accuracy on cross-validation model: 99.42%
+      (b) OOB Error Rate Estmate: 0.71%. 
+      (c) Classification error for each class is also quite low, with Class D having the highest error of 1.45% followed by Class B 1.14%
+
+2. Boosted Regression is close with 96%+ accuracy.In fact the prediction on test dataset exactly matches the RF predictions.  
+
+3. The accuracy diminishes significantly when we use the LDA classifiers. As many as 3 out of 20 predictions were inconsistent. We will therefore, ignore this model.  
+
+
+```{r Save_Predictions}
+    save_file = "./Data/Predictions.csv"
+    all_results = data.frame(testing[, covars],
+                             Prediction_rf  = predObj_test_rf, 
+                             Prediction_gbm = predObj_test_gbm,
+                             Prediction_lda = predObj_test_lda) 
+    write.csv(all_results, save_file)
+    df = read.csv(save_file, header = T)
+    df[, c("Prediction_rf", "Prediction_gbm", "Prediction_lda")]
+    
+    options( warn = 0)
+```    
+
+### Post-Script
+This section is not part of the Analysis/ Report. Readers may ignore this section.
+
+#### Coursera Submission
+This code is to generate text files for submission to Coursera only, and is not part of the analysis.
+
+```{r Save_Submission_Files}
+
+  pml_write_files = function(x){
+    n = length(x)
+    for(i in 1:n){
+      filename = paste0("./Submission/problem_id_",i,".txt")
+      write.table( x[i], 
+                   file = filename, 
+                   quote = FALSE, 
+                   row.names = FALSE,
+                   col.names=FALSE)
+    }
+  }
+  
+  pml_write_files(all_results$Prediction_rf)   
+      
+```
+
+```{r Save_objects}
+  
+    # Standardized datasets
+    write.csv(std_train, "./Data/std_train.csv")
+    write.csv(std_valid, "./Data/std_valid.csv")
+    write.csv(std_test , "./Data/std_test.csv" )
+
+    
+    # Model objects
+    save(modelObj_rpart,    file = "./Objects/modelObj_rpart.RData"   )
+    save(modelObj_pca,      file = "./Objects/modelObj_pca.RData"     )
+    save(modelObj_rf,       file = "./Objects/modelObj_rf.RData"      )
+    save(modelObj_gbm,      file = "./Objects/modelObj_gbm.RData"     )
+    save(modelObj_lda,      file = "./Objects/modelObj_lda.RData"     )
+    
+    # Prediction objects
+    save(predObj_train_rf,  file = "./Objects/predObj_train_rf.RData" )
+    save(predObj_valid_rf,  file = "./Objects/predObj_valid_rf.RData" )
+    save(predObj_test_rf,   file = "./Objects/predObj_test_rf.RData"  )
+    save(predObj_train_gbm, file = "./Objects/predObj_train_gbm.RData")
+    save(predObj_valid_gbm, file = "./Objects/predObj_valid_gbm.RData")
+    save(predObj_test_gbm,  file = "./Objects/predObj_test_gbm.RData" )
+    save(predObj_train_lda, file = "./Objects/predObj_train_lda.RData")
+    save(predObj_valid_lda, file = "./Objects/predObj_valid_lda.RData")
+    save(predObj_test_lda,  file = "./Objects/predObj_test_lda.RData" )
+    
+    # Confusion-Matrix objects
+    save(cmObj_train_rf,    file = "./Objects/cmObj_train_rf.RData"   )
+    save(cmObj_valid_rf,    file = "./Objects/cmObj_valid_rf.RData"   )
+    save(cmObj_train_gbm,   file = "./Objects/cmObj_train_gbm.RData"  )
+    save(cmObj_valid_gbm,   file = "./Objects/cmObj_valid_gbm.RData"  )
+    save(cmObj_train_lda,   file = "./Objects/cmObj_train_lda.RData"  )
+    save(cmObj_valid_lda,   file = "./Objects/cmObj_valid_lda.RData"  )
+
+        
+```  

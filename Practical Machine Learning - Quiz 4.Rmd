@@ -1,0 +1,247 @@
+---
+title: "Practical Machine Learning - Quiz 4"
+author: "Sanjay-Srivastava"
+date: "October 13, 2015"
+output: html_document
+---
+
+```{r Environment, echo = FALSE}
+    
+    library(AppliedPredictiveModeling) 
+    library(caret) 
+    library(ElemStatLearn)
+    library(pgmm)
+    library(rpart) 
+    library(gbm) 
+    library(lubridate) 
+    library(forecast) 
+    library(e1071) 
+    library(randomForest)
+    library(elasticnet)
+```
+
+# Question 1
+
+Load the vowel.train and vowel.test data sets:
+library(ElemStatLearn)
+data(vowel.train)
+data(vowel.test) 
+Set the variable y to be a factor variable in both the training and test set. Then set the seed to 33833. Fit (1) a random forest predictor relating the factor variable y to the remaining variables and (2) a boosted predictor using the "gbm" method. Fit these both with the train() command in the caret package. 
+
+What are the accuracies for the two approaches on the test data set? What is the accuracy among the test set samples where the two methods agree?
+
+```{r Question_1}
+    data("vowel.train")
+    data("vowel.test")
+    
+    training = vowel.train
+    training$y = as.factor(training$y)
+    
+    testing = vowel.test
+    testing$y = as.factor(testing$y)
+    
+    set.seed(33833)
+    
+    ## random forest model
+    mod_1 = suppressMessages(
+                            train(data = training, 
+                                  y ~ ., 
+                                  method = "rf",
+                                  verbose = FALSE)
+                           )
+    pred_1 = predict(mod_1, testing)
+    txt1 = round(confusionMatrix(testing$y, pred_1)$overall["Accuracy"],4)
+    
+    ## gbm model
+    mod_2 = suppressMessages(
+                            train(data = training, 
+                                  y ~ ., 
+                                  method = "gbm",
+                                  verbose = FALSE)
+                           )
+    pred_2 = predict(mod_2, testing)
+    txt2 = round(confusionMatrix(testing$y, pred_2)$overall["Accuracy"],4)
+    
+    ## comparing the two models
+    df = data.frame(pred1 = pred_1, pred2 = pred_2)
+    df_agreed = df[df$pred1 == df$pred2, ]
+    txt3 = round(nrow(df_agreed)/nrow(df),4)
+    
+ 
+    print (paste("GBM accuracy: ", txt1, " RF accuracy: ", txt2, " In agreement: ", txt3))  
+
+```
+
+Note: this answer to Question 1 does not exactly match any choice in the quiz, but is close to (c). The reason probably is that the version of ElemStatLearn on my machine is newer than the version used to generate the answer options
+
+
+# Question 2
+Load the Alzheimer's data using the following commands
+set.seed(3433)
+library(AppliedPredictiveModeling)
+data(AlzheimerDisease)
+adData = data.frame(diagnosis,predictors)
+inTrain = createDataPartition(adData$diagnosis, p = 3/4)[[1]]
+training = adData[ inTrain,]
+testing = adData[-inTrain,]
+Set the seed to 62433 and predict diagnosis with all the other variables using a random forest ("rf"), boosted trees ("gbm") and linear discriminant analysis ("lda") model. Stack the predictions together using random forests ("rf"). What is the resulting accuracy on the test set? Is it better or worse than each of the individual predictions?
+
+1. Stacked Accuracy: 0.88 is better than all three other methods
+2. Stacked Accuracy: 0.80 is better than random forests and lda and the same as boosting.
+3. Stacked Accuracy: 0.76 is better than random forests and boosting, but not lda.
+4. Stacked Accuracy: 0.69 is better than all three other methods
+
+```{r Question_2}
+    data(AlzheimerDisease)
+    adData = data.frame(diagnosis,predictors)
+    set.seed(3433)
+    inTrain = createDataPartition(adData$diagnosis, p = 3/4)[[1]]
+    training = adData[ inTrain,]
+    testing = adData[-inTrain,]
+    
+    set.seed(62433)
+    ## RANDOM FOREST
+    mod_1 = suppressMessages(train(data = training, 
+                                   diagnosis ~ ., 
+                                   method = "rf",
+                                   verbose = FALSE))
+    pred_1 = suppressMessages(predict(mod_1, testing))
+    results = data.frame(Model = as.character("Random Forest"), 
+                         Accuracy = as.numeric(confusionMatrix(pred_1, testing$diagnosis)$overall["Accuracy"]),
+                         stringsAsFactors = FALSE)
+
+    ## BOOSTED TREES
+    mod_2 = suppressMessages(train(data = training, 
+                                   diagnosis ~ ., 
+                                   method = "gbm",
+                                   verbose = FALSE))
+    pred_2 = suppressMessages(predict(mod_2, testing))
+    results[2,] = c("Boosted Tree", 
+                    as.numeric(confusionMatrix(pred_2, testing$diagnosis)$overall["Accuracy"]))
+
+    ## LINEAR DISCRIPNANT ANALYSIS
+    mod_3 = suppressMessages(train(data = training, 
+                                   diagnosis ~ ., 
+                                   method = "lda",
+                                   verbose = FALSE))
+    pred_3 = suppressMessages(predict(mod_3, testing))
+    results[3,] = c("Linear Discriminant", 
+                    as.numeric(confusionMatrix(pred_3, testing$diagnosis)$overall["Accuracy"]))
+
+    ## STACKED MODEL
+    df = data.frame(pred1 = pred_1, pred2 = pred_2, pred3 = pred_3, diagnosis = testing$diagnosis)
+    mod_4 = suppressMessages(train(data = df, 
+                             diagnosis ~ ., 
+                             method = "rf",
+                             verbose = FALSE))
+    pred_4 = predict(mod_4, df)
+    results[4,] = c("Random Forest over Stacked", 
+                    as.numeric(confusionMatrix(pred_4, testing$diagnosis)$overall["Accuracy"]))
+
+    results$Accuracy = round(as.numeric(results$Accuracy),4)    
+    head(results)
+
+```
+
+
+# Question 3
+Load the concrete data with the commands:
+set.seed(3523)
+library(AppliedPredictiveModeling)
+data(concrete)
+inTrain = createDataPartition(concrete$CompressiveStrength, p = 3/4)[[1]]
+training = concrete[ inTrain,]
+testing = concrete[-inTrain,]
+Set the seed to 233 and fit a lasso model to predict Compressive Strength. Which variable is the last coefficient to be set to zero as the penalty increases? (Hint: it may be useful to look up ?plot.enet).
+
+1. CoarseAggregate
+2. Age
+3. FineAggregate
+4. Cement
+
+```{r Question_3}
+  data("concrete")
+  inTrain = createDataPartition(concrete$CompressiveStrength, p = 3/4)[[1]]
+  training = concrete[ inTrain,]
+  testing = concrete[-inTrain,]
+  
+  set.seed(233)
+  modfit = suppressMessages(
+                train(data = training,
+                      CompressiveStrength ~ .,
+                      method = "lasso")
+                           )
+  plot.enet(modfit$finalModel, xvar = 'penalty', use.color = TRUE)
+  
+```    
+
+Note: the last beta coefficient to be set to zero is 'Cement' as the penalty (lambda) increases
+
+
+# Question 4
+
+Load the data on the number of visitors to the instructors blog from 
+[here: ](https://d396qusza40orc.cloudfront.net/predmachlearn/gaData.csv)
+
+Using the commands:
+
+library(lubridate)  # For year() function below
+dat = read.csv("~/Desktop/gaData.csv")
+training = dat[year(dat$date) < 2012,]
+testing = dat[(year(dat$date)) > 2011,]
+tstrain = ts(training$visitsTumblr)
+Fit a model using the bats() function in the forecast package to the training time series. Then forecast this model for the remaining time points. For how many of the testing points is the true value within the 95% prediction interval bounds?
+1. 96%
+2. 93%
+3. 92%
+4. 98%
+
+```{r Question_4}
+  mycsv= read.csv("c:/users/sanjaysr/documents/GitHub/MachineLearning/gaData.csv", header = TRUE)
+  training = mycsv[year(mycsv$date) < 2012, ]
+  testing = mycsv[year(mycsv$date) > 2011, ]
+  ## convert the visits to Tumblr in a time-series
+  tstrain = ts(training$visitsTumblr)
+  ## create a model
+  modfit = bats(tstrain)
+  ## create the forecast using the model on the time-series data
+  fcast <- forecast(modfit, level = 95, h = dim(testing)[1])
+  fcast_visits = testing[testing$visitsTumblr > fcast$lower & testing$visitsTumblr < fcast$upper, ]
+  accuracy = round(nrow(fcast_visits) * 100 / nrow(testing), 2)
+  print(accuracy)
+```  
+
+# Question 5
+This question uses the Support Vector Machine or SVM. More information is
+[here: ](http://www.svm-tutorial.com/2014/10/support-vector-regression-r/)
+
+Load the concrete data with the commands:
+set.seed(3523)
+library(AppliedPredictiveModeling)
+data(concrete)
+inTrain = createDataPartition(concrete$CompressiveStrength, p = 3/4)[[1]]
+training = concrete[ inTrain,]
+testing = concrete[-inTrain,]
+Set the seed to 325 and fit a support vector machine using the e1071 package to predict Compressive Strength using the default settings. Predict on the testing set. What is the RMSE?
+
+1. 6.93
+2. 6.72
+3. 45.09
+4. 35.59
+
+```{r Question_5}
+    data(concrete)
+    set.seed(3523)
+    inTrain = createDataPartition(concrete$CompressiveStrength, p = 3/4)[[1]]
+    training = concrete[ inTrain,]
+    testing = concrete[-inTrain,]
+
+    set.seed(325)
+    ## can't use train, because the method "svm" is not in caret's built-in functions
+    ##modfit = train(data = training, CompressiveStrength ~ ., method = "svm")
+    modfit = svm(data = training, CompressiveStrength ~ .)
+    predictions = predict(modfit, testing)
+    x = accuracy(predictions, testing$CompressiveStrength)
+    x[colnames(x) == "RMSE"]
+    
+```  
