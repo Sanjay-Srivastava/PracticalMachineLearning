@@ -25,7 +25,7 @@ Six participants were asked to perform one set of 10 repetitions of the Unilater
     (Class E) Throwing the hips to the front
 
 ### Analysis Goal 
-Create a Prediction Algorithm that takes a set of sensor readings and predicts the corresponding class.
+Create a Prediction Algorithm that takes a set of sensor readings and predicts the corresponding class. We will test multiple algorithms and select one with sample error rate under 2%.
 
 ### Methodology
 To develop a prediction model, we will perform the following steps:
@@ -333,12 +333,12 @@ As seen from above, the accuracy of the model is still pretty good at 96% + when
 1. Random Forest appears to be the best model, with the following statistics:
 
       (a) Accuracy on cross-validation model: 99.42%
-      (b) OOB Error Rate Estmate: 0.71%. 
+      (b) OOB Error Rate Estmate: 0.71% well under my target error rate of 2%.
       (c) Classification error for each class is also quite low, with Class D having the highest error of 1.45% followed by Class B 1.14%
 
 2. Boosted Regression is close with 96%+ accuracy.In fact the prediction on test dataset exactly matches the RF predictions.  
 
-3. The accuracy diminishes significantly when we use the LDA classifiers. As many as 3 out of 20 predictions were inconsistent. We will therefore, ignore this model.  
+3. The accuracy diminishes significantly when we use the LDA classifiers. As many as 6 out of 20 predictions were inconsistent. With statistical accuracy at a low ~ 70%, we will ignore this model.
 
 
 ```{r Save_Predictions}

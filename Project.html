@@ -84,7 +84,7 @@ img {
 </div>
 <div id="analysis-goal" class="section level3">
 <h3>Analysis Goal</h3>
-<p>Create a Prediction Algorithm that takes a set of sensor readings and predicts the corresponding class.</p>
+<p>Create a Prediction Algorithm that takes a set of sensor readings and predicts the corresponding class. We will test multiple algorithms and select one with sample error rate under 2%.</p>
 </div>
 <div id="methodology" class="section level3">
 <h3>Methodology</h3>
@@ -476,11 +476,11 @@ img {
 <li><p>Random Forest appears to be the best model, with the following statistics:</p>
 <ol style="list-style-type: lower-alpha">
 <li>Accuracy on cross-validation model: 99.42%</li>
-<li>OOB Error Rate Estmate: 0.71%.</li>
+<li>OOB Error Rate Estmate: 0.71% well under my target error rate of 2%.</li>
 <li>Classification error for each class is also quite low, with Class D having the highest error of 1.45% followed by Class B 1.14%</li>
 </ol></li>
 <li><p>Boosted Regression is close with 96%+ accuracy.In fact the prediction on test dataset exactly matches the RF predictions.</p></li>
-<li><p>The accuracy diminishes significantly when we use the LDA classifiers. As many as 3 out of 20 predictions were inconsistent. We will therefore, ignore this model.</p></li>
+<li><p>The accuracy diminishes significantly when we use the LDA classifiers. As many as 6 out of 20 predictions were inconsistent. With statistical accuracy at a low ~ 70%, we will ignore this model.</p></li>
 </ol>
 <pre class="r"><code>    save_file = &quot;./Data/Predictions.csv&quot;
     all_results = data.frame(testing[, covars],
